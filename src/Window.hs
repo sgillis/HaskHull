@@ -12,6 +12,7 @@ withWindow width height title f = do
         case mw of
             Nothing -> G.terminate >> exitFailure
             Just win -> do
+                G.makeContextCurrent mw
                 f win
                 G.destroyWindow win
                 G.terminate
