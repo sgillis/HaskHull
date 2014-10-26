@@ -1,17 +1,33 @@
-import Control.Monad (void, unless)
-import Control.Monad.IO.Class (liftIO)
+module Main (main) where
+
+-------------------------------------------------------------------------------
+
 import Control.Concurrent.STM (TQueue, newTQueueIO)
+import Control.Monad.Trans.Maybe (runMaybeT)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad (void, unless)
 import Control.Monad.Reader (runReaderT, asks)
-import Control.Monad.State (runStateT)
+import Control.Monad.State.Strict (runStateT)
+import Graphics.GLUtil.JuicyTextures
 
 import qualified Graphics.UI.GLFW as G
 import qualified Graphics.Rendering.OpenGL as GL
 
+import Model
+import Events
+import View
+import Update
 import Window (withWindow)
-import qualified Model as M
-import qualified Events as E
-import Update (update)
-import View (draw)
+import Objects.Points (makePoints)
+import Paths_HaskHull
+
+-------------------------------------------------------------------------------
+
+runRST :: Monad m => RST r st m a -> r -> st -> m (a,st)
+runRST rst r st = flip runStateT st . flip runReaderT r $ rst
+
+runApp :: Env -> State -> IO ()
+runApp env state = void $ runRST run env state
 
 -------------------------------------------------------------------------------
 
@@ -20,40 +36,48 @@ main = do
     let width  = 1280
         height = 720
 
-    eventsChan <- newTQueueIO :: IO (TQueue M.Event)
+    eventsChan <- newTQueueIO :: IO (TQueue Event)
 
-    withWindow width height "HaskHull" $ \win -> do
-        E.setCallbacks eventsChan win
+    withWindow width height "test" $ \win -> do
+        setCallbacks eventsChan win
         G.setCursorInputMode win G.CursorInputMode'Disabled
         GL.depthFunc GL.$= Just GL.Less
         GL.cullFace GL.$= Just GL.Front
+        GL.pointSize GL.$= 10
+        GL.pointSmooth GL.$= GL.Enabled
 
-        let env = M.Env
-                { M.envEventsChan = eventsChan
-                , M.envWindow     = win
-                }
-            state = M.State
-                { M.viewer        = M.initialViewer
-                }
-        runApp env state
+        (fbWidth, fbHeight) <- G.getFramebufferSize win
+
+        mpoints <- runMaybeT makePoints
+
+        maybe
+            (return ())
+            (\points -> do
+                let env = Env
+                        { envEventsChan     = eventsChan
+                        , envWindow         = win
+                        }
+                    state = State
+                        { stateWindowWidth  = fbWidth
+                        , stateWindowHeight = fbHeight
+                        , points            = points
+                        , viewer            = initialViewer
+                        }
+                runApp env state)
+            mpoints
 
 -------------------------------------------------------------------------------
 
-runRST :: Monad m => M.RST r st m a -> r -> st -> m (a,st)
-runRST rst r st = flip runStateT st . flip runReaderT r $ rst
-
-runApp :: M.Env -> M.State -> IO ()
-runApp env state = void $ runRST run env state
-
-run :: M.App
+run :: App
 run = do
-    win <- asks M.envWindow
-
-    liftIO $ do
-        G.pollEvents
+    win <- asks envWindow
 
     update
     draw
+
+    liftIO $ do
+        G.swapBuffers win
+        G.pollEvents
 
     q <- liftIO $ G.windowShouldClose win
     unless q run
